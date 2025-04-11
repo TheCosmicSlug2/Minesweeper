@@ -1,6 +1,7 @@
 from time import sleep
 import pygame as pg
 from random import randint
+from collections import deque
 
 
 """ Possibilité de changer la texture des blocs de 0 à 9 """
@@ -178,37 +179,44 @@ def get_texture_name_with_cell_content(content: str) -> str:
     }
     return dic_content_to_color[content]
 
+def get_every_surrounding_cells_0_iter(starting_pos: tuple[int, int], grid_nb: list) -> list:
+    """
+    Retourne toutes les cellules connectées avec valeur "0", en incluant les diagonales.
+    Évite les récursions en utilisant une queue (BFS).
+    """
+    nb_rows, nb_columns = len(grid_nb), len(grid_nb[0])
+    visited = set()
+    queue = deque([starting_pos])
+    result = []
 
-def get_every_surrounding_cells_0(original_list: list, current_cell_pos: tuple[int, int], grid_nb: list):
+    neighbors = [(-1, -1), (0, -1), (1, -1),
+                 (-1, 0),           (1, 0),
+                 (-1, 1),  (0, 1),  (1, 1)]
 
-    """ Fonction récursive pour trouver les cellules vides environnentes """
+    while queue:
+        cx, cy = queue.popleft()
 
-    # cell_pos : (x, y)
-    nb_columns, nb_rows = GRID_DIMS
-    neighbors = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
-
-    for x, y in neighbors:
-        neighbour_x, neighbour_y = current_cell_pos[0] + x, current_cell_pos[1] + y
-
-        # Si pas dans la liste
-        if not (0 <= neighbour_x < nb_columns and 0 <= neighbour_y < nb_rows):
+        if not (0 <= cx < nb_columns and 0 <= cy < nb_rows):
+            continue
+        if (cx, cy) in visited:
             continue
 
-        # Si le voisin n'est pas 0
-        if grid_nb[neighbour_y][neighbour_x] != "0":
+        visited.add((cx, cy))
 
-            original_list.append((neighbour_x, neighbour_y))
+        # Si ce n'est pas un 0, on ajoute juste et on ne continue pas
+        if grid_nb[cy][cx] != "0":
+            result.append((cx, cy))
             continue
 
-        if (neighbour_x, neighbour_y) not in original_list:
-            original_list.append((neighbour_x, neighbour_y))
-            original_list = get_every_surrounding_cells_0(
-                original_list=original_list,
-                current_cell_pos=(neighbour_x, neighbour_y),
-                grid_nb=grid_nb
-            )
+        # Si c'est un 0, on ajoute et on continue à étendre
+        result.append((cx, cy))
+        for dx, dy in neighbors:
+            nx, ny = cx + dx, cy + dy
+            if (0 <= nx < nb_columns and 0 <= ny < nb_rows and (nx, ny) not in visited):
+                queue.append((nx, ny))
 
-    return original_list
+    return result
+
 
 
 def get_mouse_pos_in_cell() -> tuple[int, int]:
@@ -289,7 +297,7 @@ sound_flag_remove = pg.mixer.Sound("ressources/sfx/flagremove.mp3")
 
 liste_textures_path, liste_texture_name = create_texture_path()
 dic_textures = load_textures(liste_textures_path, liste_texture_name)
-RNG_MINES = 10
+RNG_MINES = 5
 
 class Game:
     def __init__(self):
@@ -315,17 +323,20 @@ class Game:
         clock = pg.time.Clock()
         while self.running:
             self.handle_events()
+            if self.mine_clicked:
+                self.lose_game()
+
+            if self.update_remaining_flags:
+                self.display_remaining_flags()
             self.update_display()
             clock.tick(30)
             self.ticks += 1
-            if not self.running:
-                sleep(3)
     
 
     def handle_events(self):
         for event in pg.event.get():
             if event.type == pg.QUIT:
-                pg.quit()
+                self.running = False
             elif event.type == pg.MOUSEBUTTONDOWN:
                 self.handle_mouse_click(event)
 
@@ -345,8 +356,9 @@ class Game:
 
     def reveal_cells(self, x, y, cell_content):
         new_cells_unlocked = []
+        revealed = False
         if cell_content == "0":
-            new_cells_unlocked = get_every_surrounding_cells_0(new_cells_unlocked, (x, y), self.nb_grid)
+            new_cells_unlocked = get_every_surrounding_cells_0_iter((x, y), self.nb_grid)
         else:
             new_cells_unlocked.append((x, y))
 
@@ -362,8 +374,10 @@ class Game:
             texture = dic_textures[texture_name]
             self.grid.blit(texture, (cell_pos[0] * CELL_DIMS[0], cell_pos[1] * CELL_DIMS[1]))
             self.revealed_cells.append(cell_pos)
+            revealed = True
         
-        pg.mixer.Sound.play(sound_click)
+        if revealed:
+            pg.mixer.Sound.play(sound_click)
 
         if len(self.revealed_cells) >= self.total_nb_cells - self.total_nb_mines:
             self.win_game()
@@ -395,12 +409,6 @@ class Game:
             time_texture_display = get_nb_texture(self.ticks // 30)
             SCREEN.blit(time_texture_display, (MARGE_LEFT, 10))
 
-        if self.mine_clicked:
-            self.lose_game()
-
-        if self.update_remaining_flags:
-            self.display_remaining_flags()
-
         SCREEN.blit(self.smiley, (SCREEN.get_width()//2 - self.smiley.get_width()// 2, MARGE_UP// 2 - self.smiley.get_width()//2))
         SCREEN.blit(self.grid, (MARGE_LEFT, MARGE_UP))
         pg.display.update()
@@ -412,7 +420,7 @@ class Game:
 
         self.smiley = get_smiley_face(3)
         pg.mixer.Sound.play(sound_win)
-        self.running = False
+        self.__init__()
 
 
     def lose_game(self):
@@ -422,7 +430,9 @@ class Game:
         self.smiley = get_smiley_face(2)
         pg.mixer.Sound.play(sound_lose)
         self.grid = draw_every_hidden_mines(self.grid, self.binary_grid, self.blasted_mine)
-        self.running = False
+        self.update_display()
+        pg.time.wait(3000)
+        self.__init__()
 
 
     def display_remaining_flags(self):
@@ -438,6 +448,5 @@ class Game:
 
 
 if __name__ == "__main__":
-    while True:
-        game = Game()
-        game.run()
+    game = Game()
+    game.run()
