@@ -1,6 +1,5 @@
-from time import sleep
 import pygame as pg
-from random import randint
+from random import randint, sample
 from collections import deque
 
 
@@ -105,18 +104,21 @@ def load_textures(list_texture_path: list[str], list_texture_name: list[str]) ->
 
 
 
-def create_random_binary_grid(rng) -> list[list[int]]:
 
-    """ MAGNIFIQUE !!! >>> """
+def create_mine_field(nb_mines):
+    # create main list:
+    liste = list(range(GRID_DIMS[0] * GRID_DIMS[1]))
+    # Get random sample
+    samples = sample(liste, nb_mines)
+    # Create empty array
+    mine_field = [[0 for _ in range(GRID_DIMS[0])] for _ in range(GRID_DIMS[1])]
 
-    nb_columns, nb_rows = GRID_DIMS
+    for pos in samples:
+        row, col = divmod(pos, GRID_DIMS[0])
+        mine_field[row][col] = 1
+    
+    return mine_field
 
-    return [
-
-        [1 if randint(0, rng) > rng-1 else 0 for _ in range(nb_columns)]
-
-        for _ in range(nb_rows)
-    ]
 
 
 def draw_grid(cells: list[list[int]], passive_cell_texture: pg.Surface) -> pg.Surface:
@@ -278,13 +280,13 @@ pg.display.set_caption("Démineur")
 SCREEN = pg.display.set_mode(RES)
 clock = pg.time.Clock()
 
-GREY = (120, 120, 120)
 
+from settings import *
+GREY = (120, 120, 120)
 MARGE_UP, MARGE_DOWN = 80, 20
 MARGE_RIGHT, MARGE_LEFT = 40, 40
 GAME_SCREEN = (RES[0] - (MARGE_RIGHT + MARGE_LEFT), RES[1] - (MARGE_UP + MARGE_DOWN))
 
-GRID_DIMS = (20, 16)
 CELL_DIMS = (GAME_SCREEN[0] // GRID_DIMS[0], GAME_SCREEN[1] // GRID_DIMS[1])
 GAME_SCREEN = (CELL_DIMS[0] * GRID_DIMS[0], CELL_DIMS[1] * GRID_DIMS[1]) # Recalculer pour plus de précisions
 
@@ -297,13 +299,12 @@ sound_flag_remove = pg.mixer.Sound("ressources/sfx/flagremove.mp3")
 
 liste_textures_path, liste_texture_name = create_texture_path()
 dic_textures = load_textures(liste_textures_path, liste_texture_name)
-RNG_MINES = 5
 
 class Game:
     def __init__(self):
         self.liste_flag_pos = []
         self.revealed_cells = []
-        self.binary_grid = create_random_binary_grid(RNG_MINES)
+        self.binary_grid = create_mine_field(NB_MINES)
         self.total_nb_cells = GRID_DIMS[0] * GRID_DIMS[1]
         self.total_nb_mines = sum(column for row in self.binary_grid for column in row if column == 1)
         self.nb_remaining_flags = self.total_nb_mines
@@ -315,6 +316,8 @@ class Game:
         self.mine_clicked = False
         self.blasted_mine = None
         self.update_remaining_flags = True
+        self.overlay_cell = pg.Surface(CELL_DIMS, pg.SRCALPHA)
+        self.overlay_cell.fill((255, 255, 255, 150))
         SCREEN.fill(GREY)
         pg.mixer.Sound.play(sound_start)
     
@@ -328,7 +331,7 @@ class Game:
 
             if self.update_remaining_flags:
                 self.display_remaining_flags()
-            self.update_display()
+            self.update_display(pg.mouse.get_pos())
             clock.tick(30)
             self.ticks += 1
     
@@ -401,16 +404,23 @@ class Game:
         self.grid.blit(cell_content, (x * CELL_DIMS[0], y * CELL_DIMS[1]))
 
 
-    def update_display(self):
+    def update_display(self, mouse_pos):
 
         """ Teste les conditions de temps, de victoire et update le display """
+
+        mousex = mouse_pos[0] - MARGE_LEFT
+        mousey = mouse_pos[1] - MARGE_UP
+        gripos = (mousex // CELL_DIMS[0], mousey // CELL_DIMS[1])
+        new_pos = (MARGE_LEFT + gripos[0] * CELL_DIMS[0], MARGE_UP + gripos[1] * CELL_DIMS[1])
 
         if self.ticks % 30 == 0:
             time_texture_display = get_nb_texture(self.ticks // 30)
             SCREEN.blit(time_texture_display, (MARGE_LEFT, 10))
 
-        SCREEN.blit(self.smiley, (SCREEN.get_width()//2 - self.smiley.get_width()// 2, MARGE_UP// 2 - self.smiley.get_width()//2))
+        SCREEN.blit(self.smiley, (SCREEN.get_width()//2 - self.smiley.get_width()// 2, MARGE_UP// 2 - self.smiley.get_width()//2))       
         SCREEN.blit(self.grid, (MARGE_LEFT, MARGE_UP))
+        if MARGE_LEFT < mouse_pos[0] < RES[0] - MARGE_RIGHT and MARGE_UP < mouse_pos[1] < RES[1] - MARGE_DOWN:
+            SCREEN.blit(self.overlay_cell, new_pos)
         pg.display.update()
 
 
@@ -430,7 +440,7 @@ class Game:
         self.smiley = get_smiley_face(2)
         pg.mixer.Sound.play(sound_lose)
         self.grid = draw_every_hidden_mines(self.grid, self.binary_grid, self.blasted_mine)
-        self.update_display()
+        self.update_display(pg.mouse.get_pos())
         pg.time.wait(3000)
         self.__init__()
 

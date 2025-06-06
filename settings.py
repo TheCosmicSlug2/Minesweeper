@@ -1,0 +1,2 @@
+GRID_DIMS = (20, 16)
+NB_MINES = 40
